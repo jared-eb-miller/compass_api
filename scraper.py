@@ -9,8 +9,25 @@ from selenium.webdriver.support import expected_conditions as EC
 
 import requests
 from bs4 import BeautifulSoup
+import pandas as pd
 
 from utils import *
+
+HEADER_MAP = {
+    'Liberty ID Number': 'LUID',
+    "Student's Preferred Name": 'Preferred Name',
+    'Tutor/Mentor': 'Tutor/Mentor',
+    'Appointment Type': 'Course',
+    'Date': 'Date',
+    'Time': 'Time',
+    'Length (in minutes)': 'Length (min)',
+    'Location': 'Location',
+    'Purpose of Appointment': 'Purpose',
+    'Student None': 'Notes',
+    'Appointment Approved?': 'Approved?',
+    'Reason for Cancellation': 'Reason for Cancellation',
+    'Appointment Attendance': 'Attendance'
+}
 
 # load credentials from a secure location
 with open('credentials.json') as f:
@@ -60,20 +77,84 @@ for cookie in request_cookies:
 
 # navigate to 'Tutoring/Mentoring' page
 response = session.get("https://liberty-insight.symplicity.com/students/index.php?s=tutoring&mode=list")
-print("Response Status Code:", response.status_code)
+print("'Tutoring/Mentoring' page Response Status Code:", response.status_code)
 # navigate to 'My Students' tab
 response = session.get("https://liberty-insight.symplicity.com/students/index.php?tab=sessions")
-print("Response Status Code:", response.status_code)
+print("'My Students' tab Response Status Code:", response.status_code)
 # navigate to 'Approved' subtab
 # response = session.get("https://liberty-insight.symplicity.com/students/index.php?subtab=list")
-# print("Response Status Code:", response.status_code)
+# print("'Approved' subtab Response Status Code:", response.status_code)
 # show maximmum entries (250)
 response = session.get("https://liberty-insight.symplicity.com/students/index.php?_so_list_aatad2de5842cb41dd3e20ad8f9847304ae=250")
-print("Response Status Code:", response.status_code)
+print("Maximmum Entries Response Status Code:", response.status_code)
 # navigate to 'Approved' subtab
 # response = session.get("https://liberty-insight.symplicity.com/students/index.php?subtab=list")
 
 # parse the HTML content using BeautifulSoup
 bs = BeautifulSoup(response.text, 'html.parser')
+assert bs.find(class_='lst-rpp').find('option', selected=True).text == '250', "Error: Not showing maximum entries"
 
-print(bs.find(id="_list_form").find_all("a"))
+a_tags = bs.find(id="_list_form").find('ul').find_all("a")
+print(f"Found {len(a_tags)} <a> tags in the #_list_form element")
+
+# extract href attributes and ensure they are unique
+hrefs: list[str] = []
+for a in a_tags: hrefs.append( a.get("href") )
+hrefs_df = pd.DataFrame(hrefs, columns=["href"])
+hrefs_df['Tab'] = 'Approved'
+assert hrefs_df['href'].is_unique, "Error: hrefs are not unique"
+print("Found unique links to all appointments")
+
+# navigate to 'Archive' subtab
+response = session.get("https://liberty-insight.symplicity.com/students/index.php?subtab=archived")
+print("'Archive' subtab Response Status Code:", response.status_code)
+
+# parse the HTML content using BeautifulSoup
+bs = BeautifulSoup(response.text, 'html.parser')
+assert bs.find(class_='lst-rpp').find('option', selected=True).text == '250', "Error: Not showing maximum entries"
+
+form = bs.find(id="_list_form")
+if form.find(class_='lst-foot') is None: 
+    num_pages = 1
+else: 
+    num_pages = len(form.find(class_='lst-foot').find_all('option'))
+a_tags = form.find('ul').find_all("a")
+print(f"Found {len(a_tags)} <a> tags in the #_list_form element")
+
+# extract href attributes and ensure they are unique
+hrefs: list[str] = []
+names: list[str] = []
+for a in a_tags:
+    hrefs.append( a.get("href").strip() )
+    names.append( a.text.strip() )
+
+# loop through remaining pages (if any)
+for page_num in range(2, num_pages+1):
+    response = session.get(f"https://liberty-insight.symplicity.com/students/index.php?_so_list_fromad2de5842cb41dd3e20ad8f9847304ae=250&_so_list_fromad2de5842cb41dd3e20ad8f9847304ae_page={page_num}&")
+    print(f"'Archive' subtab Page {page_num} Response Status Code:", response.status_code)
+
+    # parse the HTML content using BeautifulSoup
+    bs = BeautifulSoup(response.text, 'html.parser')
+    assert bs.find(class_='lst-rpp').find('option', selected=True).text == '250', "Error: Not showing maximum entries"
+
+    # extract href attributes and ensure they are unique
+    form = bs.find(id="_list_form")
+    a_tags = form.find('ul').find_all("a")
+    print(f"Found {len(a_tags)} <a> tags in the #_list_form element")
+    for a in a_tags: 
+        href = a.get("href").strip()
+        if href not in hrefs:
+            hrefs.append(href)
+            names.append( a.text.strip() )
+        else:
+            print(f"Duplicate href found on page {page_num}: {href}")
+    
+hrefs_df = pd.DataFrame(data={'href': hrefs, 'Name': names})
+hrefs_df['Tab'] = 'Archived'
+
+try:
+    assert hrefs_df['href'].is_unique, "Error: hrefs are not unique"
+except AssertionError as e:
+    hrefs_df['Duplicate'] = hrefs_df.duplicated(subset=['href'], keep=False)
+
+print("Found unique links to all appointments")
