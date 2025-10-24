@@ -10,24 +10,9 @@ from selenium.webdriver.support import expected_conditions as EC
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
+import numpy as np
 
 from utils import *
-
-HEADER_MAP = {
-    'Liberty ID Number': 'LUID',
-    "Student's Preferred Name": 'Preferred Name',
-    'Tutor/Mentor': 'Tutor/Mentor',
-    'Appointment Type': 'Course',
-    'Date': 'Date',
-    'Time': 'Time',
-    'Length (in minutes)': 'Length (min)',
-    'Location': 'Location',
-    'Purpose of Appointment': 'Purpose',
-    'Student None': 'Notes',
-    'Appointment Approved?': 'Approved?',
-    'Reason for Cancellation': 'Reason for Cancellation',
-    'Appointment Attendance': 'Attendance'
-}
 
 # load credentials from a secure location
 with open('credentials.json') as f:
@@ -40,7 +25,7 @@ WAIT = WebDriverWait(driver , 10, poll_frequency=0.1)
 WAIT_LONG = WebDriverWait(driver , 10, poll_frequency=1)
 
 # Automate login (update selectors as needed)
-driver.get("https://liberty-insight.symplicity.com/students/index.php?tab=sessions")
+driver.get(BASE_URL + "?tab=sessions")
 # Wait up to 10 seconds for the element with name "loginfmt" to appear
 WAIT.until( EC.presence_of_element_located((By.NAME, "loginfmt")) )
 add_email(driver, credentials)
@@ -62,7 +47,7 @@ print("Clicked Sign In"); time.sleep(1)
 
 print("Waiting for URL to change... (waiting for user to complete lognin)")
 
-while not driver.current_url == 'https://liberty-insight.symplicity.com/students/index.php?s=home':
+while not driver.current_url == BASE_URL + '?s=home':
     print(int(time.time()), "Current URL:", driver.current_url)
     time.sleep(1)
 
@@ -76,16 +61,16 @@ for cookie in request_cookies:
     session.cookies.set(cookie['name'], cookie['value'])
 
 # navigate to 'Tutoring/Mentoring' page
-response = session.get("https://liberty-insight.symplicity.com/students/index.php?s=tutoring&mode=list")
+response = session.get(BASE_URL + "?s=tutoring&mode=list")
 print("'Tutoring/Mentoring' page Response Status Code:", response.status_code)
 # navigate to 'My Students' tab
-response = session.get("https://liberty-insight.symplicity.com/students/index.php?tab=sessions")
+response = session.get(BASE_URL + "?tab=sessions")
 print("'My Students' tab Response Status Code:", response.status_code)
 # navigate to 'Approved' subtab
 # response = session.get("https://liberty-insight.symplicity.com/students/index.php?subtab=list")
 # print("'Approved' subtab Response Status Code:", response.status_code)
 # show maximmum entries (250)
-response = session.get("https://liberty-insight.symplicity.com/students/index.php?_so_list_aatad2de5842cb41dd3e20ad8f9847304ae=250")
+response = session.get(BASE_URL + "?_so_list_aatad2de5842cb41dd3e20ad8f9847304ae=250")
 print("Maximmum Entries Response Status Code:", response.status_code)
 # navigate to 'Approved' subtab
 # response = session.get("https://liberty-insight.symplicity.com/students/index.php?subtab=list")
@@ -106,7 +91,7 @@ assert hrefs_df['href'].is_unique, "Error: hrefs are not unique"
 print("Found unique links to all appointments")
 
 # navigate to 'Archive' subtab
-response = session.get("https://liberty-insight.symplicity.com/students/index.php?subtab=archived")
+response = session.get(BASE_URL + "?subtab=archived")
 print("'Archive' subtab Response Status Code:", response.status_code)
 
 # parse the HTML content using BeautifulSoup
@@ -130,7 +115,7 @@ for a in a_tags:
 
 # loop through remaining pages (if any)
 for page_num in range(2, num_pages+1):
-    response = session.get(f"https://liberty-insight.symplicity.com/students/index.php?_so_list_fromad2de5842cb41dd3e20ad8f9847304ae=250&_so_list_fromad2de5842cb41dd3e20ad8f9847304ae_page={page_num}&")
+    response = session.get(BASE_URL + f"?_so_list_fromad2de5842cb41dd3e20ad8f9847304ae=250&_so_list_fromad2de5842cb41dd3e20ad8f9847304ae_page={page_num}&")
     print(f"'Archive' subtab Page {page_num} Response Status Code:", response.status_code)
 
     # parse the HTML content using BeautifulSoup
@@ -158,3 +143,11 @@ except AssertionError as e:
     hrefs_df['Duplicate'] = hrefs_df.duplicated(subset=['href'], keep=False)
 
 print("Found unique links to all appointments")
+
+appointment_df = hrefs_df
+appointment_df[list(HEADER_MAP.values())] = np.nan
+
+appointment_df = appointment_df.apply(retrieve_appointment_data, axis=1, session=session)
+
+appointment_df.to_csv('appointments.csv')
+appointment_df.to_parquet('appointments.pq')
